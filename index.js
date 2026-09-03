@@ -19,7 +19,7 @@ const {
   settleWager,
   purchaseItem,
 } = require("./db");
-const { getEnemy } = require("./enemies");
+const { getRandomEnemy } = require("./enemies");
 const { createCombatState, playerAttack, playerDefend, playerFlee } = require("./combat");
 
 const client = new Client({
@@ -350,14 +350,14 @@ async function grantPlayerReward(userId, action, { damageTaken = 0 } = {}) {
 
 async function handleCombatCommand(message, action) {
   const userId = message.author.id;
-  if (action === "encounter") {
+  if (action === "hunt") {
     if (activeCombats.has(userId)) {
       await message.channel.send("You are already in combat. Use `echo attack`, `echo defend`, or `echo flee`.");
       return;
     }
 
     const player = await ensurePlayerRecord(userId);
-    const enemy = getEnemy("velthar_slime");
+    const enemy = getRandomEnemy();
     activeCombats.set(userId, createCombatState(enemy, player));
     await message.channel.send(
       `A **${enemy.name}** emerges from the fog. It has **${enemy.hp} HP**.\n\n`
@@ -388,18 +388,23 @@ async function handleCombatCommand(message, action) {
   if (result.victory) {
     activeCombats.delete(userId);
     const player = await ensurePlayerRecord(userId);
-    const nextXp = (player.xp ?? 0) + 30;
+    const xpReward = combat.xpReward ?? 30;
+    const coinReward = combat.coinReward ?? 24;
+    const loot = combat.loot.filter((drop) => Math.random() < drop.chance).map((drop) => drop.item);
+    const nextXp = (player.xp ?? 0) + xpReward;
     const nextLevel = Math.max(1, 1 + Math.floor(nextXp / 100));
     const updated = await updatePlayerProgress(userId, {
       xp: nextXp,
       level: nextLevel,
       hp: result.state.playerHp,
       chapter: Math.max(player.chapter ?? 1, 2),
+      inventory: [...(Array.isArray(player.inventory) ? player.inventory : []), ...loot],
     });
-    const rewarded = await adjustCoins(userId, 24);
+    const rewarded = await adjustCoins(userId, coinReward);
     await message.channel.send(
       `**Victory!** You defeat the ${result.state.enemyName}.\n\n`
-      + `**Rewards:** +30 XP, +24 Gold Coins\n`
+      + `**Rewards:** +${xpReward} XP, +${coinReward} Gold Coins\n`
+      + `**Loot:** ${loot.length ? loot.join(", ") : "Nothing this time"}\n`
       + `**Level:** ${updated?.level ?? nextLevel}\n`
       + `**Balance:** ${rewarded?.coins ?? player.coins ?? 0} Gold Coins\n`
       + "**Chapter progress:** Chapter 2 unlocked.",
@@ -816,8 +821,8 @@ client.on(Events.MessageCreate, async (message) => {
             + "`echo reset` — delete your Soul Record so you can test the beginning again\n"
             + "`echo profile` — check your Soul Record\n"
             + "`echo inventory` — view your items and equipped weapon\n"
-            + "`echo encounter` — face the first enemy\n"
-            + "`echo attack` · `echo defend` · `echo flee` — combat actions\n"
+            + "`echo hunt` — face a random Velthar enemy\n"
+            + "`echo attack` · `echo defend` · `echo flee` — combat actions during a hunt\n"
             + "`echo hunt` — gain XP and coins\n"
             + "`echo journey` — earn bigger rewards\n"
             + "`echo recover` — restore HP\n"
@@ -881,7 +886,7 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  if (["encounter", "attack", "defend", "flee"].includes(normalized)) {
+  if (["hunt", "attack", "defend", "flee"].includes(normalized)) {
     await handleCombatCommand(message, normalized);
     return;
   }
@@ -1090,54 +1095,6 @@ client.on(Events.MessageCreate, async (message) => {
     await ensurePlayerRecord(targetId);
     await updatePlayerProgress(targetId, updates);
     await message.channel.send("Admin update applied.");
-    return;
-  }
-
-  if (normalized === "hunt") {
-    const player = await ensurePlayerRecord(message.author.id);
-    const encounter = resolveSlimeEncounter(player);
-
-    if (!isOwner(message.author.id) && (player.hp ?? 100) <= encounter.damageTaken) {
-      await updatePlayerProgress(message.author.id, { hp: 0 });
-      await message.channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x6b1f2b)
-            .setTitle(`${emojiMarkup(botEmojis.slime)} The slime overwhelms you`)
-            .setDescription(
-              `${message.author} faces a Velthar slime, but your HP is too low to survive the encounter.\n\n`
-              + `**Slime HP:** ${encounter.slime.hp}\n`
-              + `**Damage taken:** ${encounter.damageTaken}\n`
-              + `**HP:** 0/${player.max_hp ?? 100}\n\n`
-              + "Use `echo recover` before trying again.",
-            )
-            .setFooter({ text: "Every encounter is shaped by your stats." }),
-        ],
-      });
-      return;
-    }
-
-    const updated = await grantPlayerReward(message.author.id, "hunt", {
-      damageTaken: encounter.damageTaken,
-    });
-    const updatedHp = updated?.hp ?? Math.max(0, (player.hp ?? 100) - encounter.damageTaken);
-
-    await message.channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x3d2942)
-          .setTitle(`${emojiMarkup(botEmojis.slime)} Slime defeated`)
-          .setDescription(
-            `${message.author} defeats a slime at the edge of Velthar.\n\n`
-            + `**Slime HP:** ${encounter.slime.hp}\n`
-            + `**Your damage:** ${encounter.playerDamage} × ${encounter.strikes} strikes\n`
-            + `**HP lost:** ${encounter.damageTaken}\n`
-            + `**HP:** ${updatedHp}/${player.max_hp ?? 100}\n\n`
-            + `**+${24} XP** • **+${18} Copper Coins** • **Level ${player.level ?? 1}**`,
-          )
-          .setFooter({ text: "The world grows louder with every step." }),
-      ],
-    });
     return;
   }
 

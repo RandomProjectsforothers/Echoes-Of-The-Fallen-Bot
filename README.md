@@ -25,7 +25,7 @@ Discord RPG bot for **Echoes of the Fallen**. The current flow introduces the pl
 - [x] Player creation and database persistence.
 - [x] Starter weapons, profile, and inventory.
 - [x] Level, XP, and Guild Rank.
-- [x] First enemy: Velthar Slime.
+- [x] Random hunt enemies with different stats and loot chances.
 - [x] Combat engine with attack, defense, and flee.
 - [x] Victory and defeat states.
 - [x] XP and Gold Coin rewards.
@@ -83,7 +83,7 @@ The bot is online locally, Neon is connected, and the next practical step is tes
 	- `echo admin givestellars @user amount`
 - JavaScript syntax check passes with `node --check index.js`.
 - The three custom sword emoji IDs are configured in `.env`.
-- The first combat encounter is available with `echo encounter`, `echo attack`, `echo defend`, and `echo flee`.
+- Hunts now start random combat encounters with `echo hunt`; use `echo attack`, `echo defend`, or `echo flee` during the fight.
 
 ## Run the Bot
 

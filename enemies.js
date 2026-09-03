@@ -7,7 +7,33 @@ const enemies = {
     defense: 0,
     xpReward: 30,
     coinReward: 24,
-    itemReward: null,
+    loot: [{ item: "Slime Core", chance: 0.2 }],
+  },
+  ash_wolf: {
+    id: "ash_wolf",
+    name: "Ash Wolf",
+    hp: 18,
+    attack: 4,
+    defense: 1,
+    xpReward: 45,
+    coinReward: 34,
+    loot: [
+      { item: "Wolf Fang", chance: 0.35 },
+      { item: "Healing Potion", chance: 0.08 },
+    ],
+  },
+  hollow_knight: {
+    id: "hollow_knight",
+    name: "Hollow Knight",
+    hp: 28,
+    attack: 6,
+    defense: 2,
+    xpReward: 75,
+    coinReward: 60,
+    loot: [
+      { item: "Rustbound Sigil", chance: 0.25 },
+      { item: "Iron Sword", chance: 0.05 },
+    ],
   },
 };
 
@@ -16,4 +42,9 @@ function getEnemy(enemyId) {
   return enemy ? { ...enemy } : null;
 }
 
-module.exports = { enemies, getEnemy };
+function getRandomEnemy() {
+  const pool = Object.values(enemies);
+  return getEnemy(pool[Math.floor(Math.random() * pool.length)].id);
+}
+
+module.exports = { enemies, getEnemy, getRandomEnemy };
