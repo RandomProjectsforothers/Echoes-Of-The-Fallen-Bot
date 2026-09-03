@@ -26,8 +26,7 @@ Discord RPG bot for **Echoes of the Fallen**. The current flow introduces the pl
 - [x] Starter weapons, profile, and inventory.
 - [x] Level, XP, and Guild Rank.
 - [x] Random hunt enemies with different stats and loot chances.
-- [x] Combat engine with attack, defense, and flee.
-- [x] Victory and defeat states.
+- [x] Stat-based hunt resolution with victory and defeat states.
 - [x] XP and Gold Coin rewards.
 - [ ] Item rewards and complete chapter progression.
 
@@ -83,7 +82,7 @@ The bot is online locally, Neon is connected, and the next practical step is tes
 	- `echo admin givestellars @user amount`
 - JavaScript syntax check passes with `node --check index.js`.
 - The three custom sword emoji IDs are configured in `.env`.
-- Hunts now start random combat encounters with `echo hunt`; use `echo attack`, `echo defend`, or `echo flee` during the fight.
+- Hunts now resolve random combat encounters from player and enemy stats with `echo hunt`.
 
 ## Run the Bot
 

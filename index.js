@@ -36,7 +36,6 @@ const OWNER_USER_ID = process.env.OWNER_USER_ID;
 const pendingLanguages = new Map();
 const pendingBegins = new Map();
 const pendingCardGames = new Map();
-const activeCombats = new Map();
 
 function customEmoji(name, id, fallback) {
   return { id, name, fallback };
@@ -347,120 +346,39 @@ async function grantPlayerReward(userId, action, { damageTaken = 0 } = {}) {
   return updated;
 }
 
-function createCombatState(enemy, player) {
-  return {
-    enemyId: enemy.id,
-    enemyName: enemy.name,
-    enemyHp: enemy.hp,
-    enemyMaxHp: enemy.hp,
-    enemyAttack: enemy.attack,
-    enemyDefense: enemy.defense,
-    xpReward: enemy.xpReward,
-    coinReward: enemy.coinReward,
-    loot: enemy.loot ?? [],
-    playerHp: player.hp ?? player.max_hp ?? 100,
-    playerMaxHp: player.max_hp ?? 100,
-    playerAttack: player.attack ?? 1,
-    playerDefense: player.defense ?? 1,
-    defending: false,
-  };
-}
-
-function resolveCombatAction(state, action) {
-  if (action === "flee") return { state, fled: true };
-
-  const defending = action === "defend";
-  const damage = defending ? 0 : Math.max(1, state.playerAttack - state.enemyDefense);
-  const enemyHp = Math.max(0, state.enemyHp - damage);
-  if (enemyHp === 0) {
-    return { state: { ...state, enemyHp, defending: false }, damage, incomingDamage: 0, victory: true };
-  }
-
-  const defenseBonus = defending ? 2 : 0;
-  const incomingDamage = Math.max(1, state.enemyAttack - Math.floor((state.playerDefense + defenseBonus) / 2));
-  const playerHp = Math.max(0, state.playerHp - incomingDamage);
-  return {
-    state: { ...state, enemyHp, playerHp, defending: false },
-    damage,
-    incomingDamage,
-    victory: false,
-    defeat: playerHp === 0,
-  };
-}
-
-async function handleCombatCommand(message, action) {
+async function resolveHunt(message) {
   const userId = message.author.id;
-  if (action === "hunt") {
-    if (activeCombats.has(userId)) {
-      await message.channel.send("You are already in combat. Use `echo attack`, `echo defend`, or `echo flee`.");
-      return;
-    }
-
-    const player = await ensurePlayerRecord(userId);
-    const enemy = getRandomEnemy();
-    activeCombats.set(userId, createCombatState(enemy, player));
-    await message.channel.send(
-      `A **${enemy.name}** emerges from the fog. It has **${enemy.hp} HP**.\n\n`
-      + "Choose `echo attack`, `echo defend`, or `echo flee`.",
-    );
-    return;
-  }
-
-  const combat = activeCombats.get(userId);
-  if (!combat) {
-    await message.channel.send("You are not in combat. Use `echo hunt` to find an enemy.");
-    return;
-  }
-
-  const result = resolveCombatAction(combat, action);
-  activeCombats.set(userId, result.state);
-
-  if (result.fled) {
-    activeCombats.delete(userId);
-    await message.channel.send("You flee into the Velthar fog. The encounter remains unresolved.");
-    return;
-  }
-
-  if (result.victory) {
-    activeCombats.delete(userId);
-    const player = await ensurePlayerRecord(userId);
-    const xpReward = combat.xpReward ?? 30;
-    const coinReward = combat.coinReward ?? 24;
-    const loot = combat.loot.filter((drop) => Math.random() < drop.chance).map((drop) => drop.item);
-    const nextXp = (player.xp ?? 0) + xpReward;
-    const nextLevel = Math.max(1, 1 + Math.floor(nextXp / 100));
-    const updated = await updatePlayerProgress(userId, {
-      xp: nextXp,
-      level: nextLevel,
-      hp: result.state.playerHp,
-      chapter: Math.max(player.chapter ?? 1, 2),
-      inventory: [...(Array.isArray(player.inventory) ? player.inventory : []), ...loot],
-    });
-    const rewarded = await adjustCoins(userId, coinReward);
-    await message.channel.send(
-      `**Victory!** You defeat the ${result.state.enemyName}.\n\n`
-      + `**Rewards:** +${xpReward} XP, +${coinReward} Gold Coins\n`
-      + `**Loot:** ${loot.length ? loot.join(", ") : "Nothing this time"}\n`
-      + `**Level:** ${updated?.level ?? nextLevel}\n`
-      + `**Balance:** ${rewarded?.coins ?? player.coins ?? 0} Gold Coins\n`
-      + "**Chapter progress:** Chapter 2 unlocked.",
-    );
-    return;
-  }
-
-  if (result.defeat) {
-    activeCombats.delete(userId);
+  const player = await ensurePlayerRecord(userId);
+  const enemy = getRandomEnemy();
+  const playerDamage = Math.max(1, (player.attack ?? 1) - enemy.defense);
+  const incomingDamage = Math.max(1, enemy.attack - Math.floor((player.defense ?? 1) / 2));
+  const strikes = Math.ceil(enemy.hp / playerDamage);
+  const damageTaken = strikes * incomingDamage;
+  if (!isOwner(userId) && (player.hp ?? 100) <= damageTaken) {
     await updatePlayerProgress(userId, { hp: 0 });
-    await message.channel.send("The enemy defeats you. Your HP has fallen to 0. Use `echo recover` before trying again.");
+    await message.channel.send(`The **${enemy.name}** overwhelms you. You take **${damageTaken} damage** and fall to 0 HP. Use \`echo recover\`.`);
     return;
   }
 
+  const loot = (enemy.loot ?? []).filter((drop) => Math.random() < drop.chance).map((drop) => drop.item);
+  const nextXp = (player.xp ?? 0) + enemy.xpReward;
+  const nextLevel = Math.max(1, 1 + Math.floor(nextXp / 100));
+  const updated = await updatePlayerProgress(userId, {
+    xp: nextXp,
+    level: nextLevel,
+    hp: Math.max(0, (player.hp ?? 100) - damageTaken),
+    chapter: Math.max(player.chapter ?? 1, 2),
+    inventory: [...(Array.isArray(player.inventory) ? player.inventory : []), ...loot],
+  });
+  const rewarded = await adjustCoins(userId, enemy.coinReward);
   await message.channel.send(
-    `${action === "attack" ? `You deal **${result.damage} damage**.` : "You brace for the next attack."}\n`
-    + `The ${result.state.enemyName} deals **${result.incomingDamage} damage**.\n\n`
-    + `**Your HP:** ${result.state.playerHp}/${result.state.playerMaxHp}\n`
-    + `**Enemy HP:** ${result.state.enemyHp}/${result.state.enemyMaxHp}\n`
-    + "Choose `echo attack`, `echo defend`, or `echo flee`.",
+    `**Victory!** You defeat the **${enemy.name}** in ${strikes} strike${strikes === 1 ? "" : "s"}.\n\n`
+    + `**Damage taken:** ${damageTaken}\n`
+    + `**HP:** ${updated?.hp ?? Math.max(0, (player.hp ?? 100) - damageTaken)}/${player.max_hp ?? 100}\n`
+    + `**Rewards:** +${enemy.xpReward} XP, +${enemy.coinReward} Gold Coins\n`
+    + `**Loot:** ${loot.length ? loot.join(", ") : "Nothing this time"}\n`
+    + `**Level:** ${updated?.level ?? nextLevel}\n`
+    + `**Balance:** ${rewarded?.coins ?? player.coins ?? 0} Gold Coins`,
   );
 }
 
@@ -838,8 +756,7 @@ client.on(Events.MessageCreate, async (message) => {
             + "`echo reset` — delete your Soul Record so you can test the beginning again\n"
             + "`echo profile` — check your Soul Record\n"
             + "`echo inventory` — view your items and equipped weapon\n"
-            + "`echo hunt` — face a random Velthar enemy\n"
-            + "`echo attack` · `echo defend` · `echo flee` — combat actions during a hunt\n"
+            + "`echo hunt` — face a random Velthar enemy using your stats\n"
             + "`echo hunt` — gain XP and coins\n"
             + "`echo journey` — earn bigger rewards\n"
             + "`echo recover` — restore HP\n"
@@ -903,8 +820,8 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  if (["hunt", "attack", "defend", "flee"].includes(normalized)) {
-    await handleCombatCommand(message, normalized);
+  if (normalized === "hunt") {
+    await resolveHunt(message);
     return;
   }
 
