@@ -247,7 +247,6 @@ Restart the bot after changing `.env`. The buttons use Unicode fallback emojis i
 
 - `index.js` - Discord bot and starter weapon interaction flow.
 - `enemies.js` - Enemy definitions and reward values.
-- `combat.js` - Reusable combat state and action rules.
 - `deploy-commands.js` - Registers Discord slash commands.
 - `neon.ts` - Neon configuration policy.
 - `.neon` - Local Neon project and branch link; ignored by git.

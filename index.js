@@ -20,7 +20,6 @@ const {
   purchaseItem,
 } = require("./db");
 const { getRandomEnemy } = require("./enemies");
-const { createCombatState, playerAttack, playerDefend, playerFlee } = require("./combat");
 
 const client = new Client({
   intents: [
@@ -348,6 +347,47 @@ async function grantPlayerReward(userId, action, { damageTaken = 0 } = {}) {
   return updated;
 }
 
+function createCombatState(enemy, player) {
+  return {
+    enemyId: enemy.id,
+    enemyName: enemy.name,
+    enemyHp: enemy.hp,
+    enemyMaxHp: enemy.hp,
+    enemyAttack: enemy.attack,
+    enemyDefense: enemy.defense,
+    xpReward: enemy.xpReward,
+    coinReward: enemy.coinReward,
+    loot: enemy.loot ?? [],
+    playerHp: player.hp ?? player.max_hp ?? 100,
+    playerMaxHp: player.max_hp ?? 100,
+    playerAttack: player.attack ?? 1,
+    playerDefense: player.defense ?? 1,
+    defending: false,
+  };
+}
+
+function resolveCombatAction(state, action) {
+  if (action === "flee") return { state, fled: true };
+
+  const defending = action === "defend";
+  const damage = defending ? 0 : Math.max(1, state.playerAttack - state.enemyDefense);
+  const enemyHp = Math.max(0, state.enemyHp - damage);
+  if (enemyHp === 0) {
+    return { state: { ...state, enemyHp, defending: false }, damage, incomingDamage: 0, victory: true };
+  }
+
+  const defenseBonus = defending ? 2 : 0;
+  const incomingDamage = Math.max(1, state.enemyAttack - Math.floor((state.playerDefense + defenseBonus) / 2));
+  const playerHp = Math.max(0, state.playerHp - incomingDamage);
+  return {
+    state: { ...state, enemyHp, playerHp, defending: false },
+    damage,
+    incomingDamage,
+    victory: false,
+    defeat: playerHp === 0,
+  };
+}
+
 async function handleCombatCommand(message, action) {
   const userId = message.author.id;
   if (action === "hunt") {
@@ -368,15 +408,11 @@ async function handleCombatCommand(message, action) {
 
   const combat = activeCombats.get(userId);
   if (!combat) {
-    await message.channel.send("You are not in combat. Use `echo encounter` to face the first enemy.");
+    await message.channel.send("You are not in combat. Use `echo hunt` to find an enemy.");
     return;
   }
 
-  const result = action === "attack"
-    ? playerAttack(combat)
-    : action === "defend"
-      ? playerDefend(combat)
-      : playerFlee(combat);
+  const result = resolveCombatAction(combat, action);
   activeCombats.set(userId, result.state);
 
   if (result.fled) {
@@ -426,25 +462,6 @@ async function handleCombatCommand(message, action) {
     + `**Enemy HP:** ${result.state.enemyHp}/${result.state.enemyMaxHp}\n`
     + "Choose `echo attack`, `echo defend`, or `echo flee`.",
   );
-}
-
-function resolveSlimeEncounter(player) {
-  const slime = {
-    hp: 5 + Math.max(0, (player.level ?? 1) - 1),
-    attack: 2,
-    defense: 0,
-  };
-  const playerDamage = Math.max(1, (player.attack ?? 1) - slime.defense);
-  const incomingDamage = Math.max(1, slime.attack - Math.floor((player.defense ?? 1) / 2));
-  const strikes = Math.ceil(slime.hp / playerDamage);
-
-  return {
-    slime,
-    playerDamage,
-    incomingDamage,
-    strikes,
-    damageTaken: strikes * incomingDamage,
-  };
 }
 
 async function sendProfileReply(target, userId, { isEphemeral = false } = {}) {
