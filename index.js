@@ -18,6 +18,7 @@ const {
   adjustCoins,
   settleWager,
   purchaseItem,
+  sellItem,
 } = require("./db");
 const { getRandomEnemy } = require("./enemies");
 
@@ -136,10 +137,10 @@ function formatEquipment(weapon, inventory) {
 const shopItems = {
   antidote: { name: "Antidote", emoji: botEmojis.antidote, price: 20, description: "Cures poison and other venom effects." },
   healing_potion: { name: "Healing Potion", emoji: botEmojis.heal, price: 30, description: "Restores 25 HP when used." },
-  iron_sword: { name: "Iron Sword", price: 100, description: "Weapon · Damage +2 · Reliable shop steel." },
-  twin_daggers: { name: "Twin Daggers", price: 115, description: "Weapon · Damage +1 · Fast and precise." },
-  leather_armor: { name: "Leather Armor", price: 90, description: "Armor · Defense +2 · Buyable gear, not crafted gear." },
-  chain_armor: { name: "Chain Armor", price: 180, description: "Armor · Defense +4 · Buyable gear, not crafted gear." },
+  iron_sword: { name: "Iron Sword", type: "weapon", attackBonus: 2, price: 100, description: "Weapon · Attack +2 · Reliable shop steel." },
+  twin_daggers: { name: "Twin Daggers", type: "weapon", attackBonus: 1, price: 115, description: "Weapon · Attack +1 · Fast and precise." },
+  leather_armor: { name: "Leather Armor", type: "armor", defenseBonus: 2, price: 90, description: "Armor · Defense +2 · Buyable gear." },
+  chain_armor: { name: "Chain Armor", type: "armor", defenseBonus: 4, price: 180, description: "Armor · Defense +4 · Buyable gear." },
   dungeon_key: { name: "Dungeon Key", emoji: botEmojis.key, price: 150, description: "Special item · Required to attempt a dungeon." },
 };
 
@@ -299,6 +300,13 @@ function isOwner(userId) {
   return Boolean(OWNER_USER_ID && userId === OWNER_USER_ID);
 }
 
+function getEffectiveStats(player) {
+  return {
+    attack: (player.attack ?? 1) + (player.weapon_attack_bonus ?? 0),
+    defense: (player.defense ?? 1) + (player.armor_defense_bonus ?? 0),
+  };
+}
+
 async function ensurePlayerRecord(userId, weapon = "Wanderer") {
   const existing = await getPlayer(userId);
 
@@ -350,8 +358,9 @@ async function resolveHunt(message) {
   const userId = message.author.id;
   const player = await ensurePlayerRecord(userId);
   const enemy = getRandomEnemy();
-  const playerDamage = Math.max(1, (player.attack ?? 1) - enemy.defense);
-  const incomingDamage = Math.max(1, enemy.attack - Math.floor((player.defense ?? 1) / 2));
+  const stats = getEffectiveStats(player);
+  const playerDamage = Math.max(1, stats.attack - enemy.defense);
+  const incomingDamage = Math.max(1, enemy.attack - Math.floor(stats.defense / 2));
   const strikes = Math.ceil(enemy.hp / playerDamage);
   const damageTaken = strikes * incomingDamage;
   if (!isOwner(userId) && (player.hp ?? 100) <= damageTaken) {
@@ -433,13 +442,13 @@ async function sendProfileReply(target, userId, { isEphemeral = false } = {}) {
         name: "STATS",
         value:
         `**HP:** ${existing.hp}/${existing.max_hp}\n` +
-        `**Attack:** ${existing.weapon === "Sage Sword Oblivion" && !isOwner(profileUser.id) ? "Unknown" : existing.attack}\n` +
-        `**Defense:** ${existing.defense}`,
+        `**Attack:** ${existing.weapon === "Sage Sword Oblivion" && !isOwner(profileUser.id) ? "Unknown" : getEffectiveStats(existing).attack}\n` +
+        `**Defense:** ${getEffectiveStats(existing).defense}`,
         inline: true,
       },
       {
         name: "EQUIPMENT",
-        value: `**Sword:** ${emojiMarkup(getWeaponEmoji(existing.weapon))} ${existing.weapon}\n**Armor:** No Armor`,
+        value: `**Sword:** ${emojiMarkup(getWeaponEmoji(existing.weapon))} ${existing.weapon}\n**Armor:** ${existing.armor ?? "No Armor"}`,
         inline: true,
       },
       {
@@ -761,8 +770,9 @@ client.on(Events.MessageCreate, async (message) => {
             + "`echo journey` — earn bigger rewards\n"
             + "`echo recover` — restore HP\n"
             + "`echo shop` — open the Velthar supply house\n"
+            + "`echo sell <item>` — sell an inventory item for half price\n"
             + "`echo cf <value> <heads|tails>` — flip a coin for a 50/50 chance\n"
-            + "`echo use potion` — drink a Healing Potion\n"
+            + "`echo use potion` or `echo use antidote` — use a consumable\n"
             + "`echo dungeon` — prepare for the next dungeon floor",
           )
           .setFooter({ text: "Your choices shape the story of Velthar." }),
@@ -917,13 +927,22 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  if (normalized === "use" && rest[0]?.toLowerCase() === "potion") {
+  if (normalized === "use" && ["potion", "antidote"].includes(rest[0]?.toLowerCase())) {
+    const itemName = rest[0].toLowerCase() === "antidote" ? "Antidote" : "Healing Potion";
     const player = await ensurePlayerRecord(message.author.id);
     const inventory = Array.isArray(player.inventory) ? player.inventory : [];
-    const potionIndex = inventory.indexOf("Healing Potion");
+    const itemIndex = inventory.indexOf(itemName);
 
-    if (!isOwner(message.author.id) && potionIndex === -1) {
-      await message.channel.send("You do not have a Healing Potion. Use `echo shop` to visit the supply house.");
+    if (!isOwner(message.author.id) && itemIndex === -1) {
+      await message.channel.send(`You do not have an ${itemName}. Use \`echo shop\` to visit the supply house.`);
+      return;
+    }
+
+    if (itemName === "Antidote") {
+      const nextInventory = [...inventory];
+      nextInventory.splice(itemIndex, 1);
+      await updatePlayerProgress(message.author.id, { inventory: nextInventory });
+      await message.channel.send(`${emojiMarkup(botEmojis.antidote)} ${message.author} uses an Antidote. Poison effects are cleared.`);
       return;
     }
 
@@ -935,10 +954,31 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     const nextInventory = [...inventory];
-    nextInventory.splice(potionIndex, 1);
+    nextInventory.splice(itemIndex, 1);
     const healed = Math.min(maxHp, currentHp + 25);
     await updatePlayerProgress(message.author.id, { hp: healed, inventory: nextInventory });
     await message.channel.send(`🧪 ${message.author} drinks a Healing Potion and restores **${healed - currentHp} HP** (**${healed}/${maxHp} HP**).`);
+    return;
+  }
+
+  if (normalized === "sell") {
+    const itemName = rest.join(" ");
+    const item = Object.values(shopItems).find((shopItem) => shopItem.name.toLowerCase() === itemName.toLowerCase());
+    if (!item) {
+      await message.channel.send("Choose an item you own to sell. Example: `echo sell Iron Sword`.");
+      return;
+    }
+    const currentPlayer = await ensurePlayerRecord(message.author.id);
+    if (currentPlayer.weapon === item.name || currentPlayer.armor === item.name) {
+      await message.channel.send("You cannot sell equipment that is currently equipped.");
+      return;
+    }
+    const updated = await sellItem(message.author.id, item.name, Math.max(1, Math.floor(item.price / 2)));
+    if (!updated) {
+      await message.channel.send(`You do not have **${item.name}** to sell.`);
+      return;
+    }
+    await message.channel.send(`You sold **${item.name}** for **${Math.max(1, Math.floor(item.price / 2))} Gold Coins**. Balance: **${updated.coins} Gold Coins**.`);
     return;
   }
 
@@ -1033,6 +1073,12 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (normalized === "journey") {
+    if (Math.random() < 0.1) {
+      const ambush = getRandomEnemy();
+      await updatePlayerProgress(message.author.id, { hp: 0 });
+      await message.channel.send(`**Ambush!** An **${ambush.name}** catches you on the road and defeats you in one strike. Use \`echo recover\` to survive the journey.`);
+      return;
+    }
     const updated = await grantPlayerReward(message.author.id, "journey");
     const player = updated || (await ensurePlayerRecord(message.author.id));
 
@@ -1071,13 +1117,32 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (normalized === "dungeon") {
+    const memberIds = [message.author.id, ...rest
+      .map((mention) => mention.match(/^<@!?([0-9]+)>$/)?.[1])
+      .filter(Boolean)];
+    const partyIds = [...new Set(memberIds)];
+    if (partyIds.length < 2) {
+      await message.channel.send("A dungeon party needs at least 2 players. Mention another player to enter together.");
+      return;
+    }
+    const party = await Promise.all(partyIds.map((id) => ensurePlayerRecord(id)));
+    if (party.some((player) => !Array.isArray(player.inventory) || !player.inventory.includes("Dungeon Key"))) {
+      await message.channel.send("Every dungeon party member needs a Dungeon Key.");
+      return;
+    }
+    const floor = Math.max(...party.map((player) => player.dungeon_floor ?? 0)) + 1;
+    await Promise.all(party.map((player, index) => {
+      const inventory = [...player.inventory];
+      inventory.splice(inventory.indexOf("Dungeon Key"), 1);
+      return updatePlayerProgress(partyIds[index], { dungeon_floor: floor, inventory });
+    }));
     await sendGuidedCommandReply(message, "dungeon", {
       embeds: [
         new EmbedBuilder()
           .setColor(0x3d2942)
           .setTitle("🕳️ Dungeon gate")
           .setDescription(
-            `${message.author} stands before the sealed dungeon gate. The next floor awaits beyond it, but the doors will not open until the challenge is earned.`,
+            `${message.author} and ${partyIds.slice(1).map((id) => `<@${id}>`).join(", ")} enter Dungeon Floor **${floor}** together. Each key is consumed at the gate.`,
           )
           .setFooter({ text: "Prepare. Then descend." }),
       ],
@@ -1189,7 +1254,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-        const updated = await purchaseItem(interaction.user.id, item.price, item.name);
+        const equipment = item.type === "weapon"
+          ? { weapon: item.name, weaponAttackBonus: item.attackBonus }
+          : item.type === "armor"
+            ? { armor: item.name, armorDefenseBonus: item.defenseBonus }
+            : {};
+        const updated = await purchaseItem(interaction.user.id, item.price, item.name, equipment);
         if (!updated) {
           await interaction.editReply("That purchase could not be completed because your balance changed. Please try again.");
           return;
@@ -1353,13 +1423,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 name: "STATS",
                 value:
                 `**HP:** ${existing.hp}/${existing.max_hp}\n` +
-                `**Attack:** ${existing.weapon === "Sage Sword Oblivion" && !isOwner(interaction.user.id) ? "Unknown" : existing.attack}\n` +
-                `**Defense:** ${existing.defense}`,
+                `**Attack:** ${existing.weapon === "Sage Sword Oblivion" && !isOwner(interaction.user.id) ? "Unknown" : getEffectiveStats(existing).attack}\n` +
+                `**Defense:** ${getEffectiveStats(existing).defense}`,
                 inline: true,
               },
               {
                 name: "EQUIPMENT",
-                value: `**Sword:** ${emojiMarkup(getWeaponEmoji(existing.weapon))} ${existing.weapon}\n**Armor:** No Armor`,
+                value: `**Sword:** ${emojiMarkup(getWeaponEmoji(existing.weapon))} ${existing.weapon}\n**Armor:** ${existing.armor ?? "No Armor"}`,
                 inline: true,
               },
               {

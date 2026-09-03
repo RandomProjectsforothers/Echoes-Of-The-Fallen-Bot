@@ -10,6 +10,7 @@ async function init() {
     CREATE TABLE IF NOT EXISTS players (
       discord_id TEXT PRIMARY KEY,
       weapon TEXT NOT NULL,
+      armor TEXT,
       chapter INTEGER NOT NULL DEFAULT 1,
       dungeon_floor INTEGER NOT NULL DEFAULT 0,
       level INTEGER NOT NULL DEFAULT 1,
@@ -25,6 +26,8 @@ async function init() {
       max_hp INTEGER NOT NULL DEFAULT 100,
       attack INTEGER NOT NULL DEFAULT 1,
       defense INTEGER NOT NULL DEFAULT 1,
+      weapon_attack_bonus INTEGER NOT NULL DEFAULT 0,
+      armor_defense_bonus INTEGER NOT NULL DEFAULT 0,
       inventory JSONB NOT NULL DEFAULT '[]'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
@@ -46,6 +49,9 @@ async function init() {
       ADD COLUMN IF NOT EXISTS max_hp INTEGER NOT NULL DEFAULT 100,
       ADD COLUMN IF NOT EXISTS attack INTEGER NOT NULL DEFAULT 1,
       ADD COLUMN IF NOT EXISTS defense INTEGER NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS armor TEXT,
+      ADD COLUMN IF NOT EXISTS weapon_attack_bonus INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS armor_defense_bonus INTEGER NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS inventory JSONB NOT NULL DEFAULT '[]'::jsonb
   `);
 }
@@ -79,14 +85,17 @@ async function createPlayer(discordId, weapon, overrides = {}) {
     maxHp = 100,
     attack = 1,
     defense = 1,
+    armor = null,
+    weaponAttackBonus = 0,
+    armorDefenseBonus = 0,
     inventory = [],
   } = overrides;
 
   await pool.query(
-    `INSERT INTO players (discord_id, weapon, chapter, dungeon_floor, level, rank, title, tutorial_language, tutorial_mode, tutorial_step, xp, coins, stellars, hp, max_hp, attack, defense, inventory)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+    `INSERT INTO players (discord_id, weapon, armor, chapter, dungeon_floor, level, rank, title, tutorial_language, tutorial_mode, tutorial_step, xp, coins, stellars, hp, max_hp, attack, defense, weapon_attack_bonus, armor_defense_bonus, inventory)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
      ON CONFLICT (discord_id) DO NOTHING`,
-    [discordId, weapon, chapter, dungeonFloor, level, rank, title, tutorialLanguage, tutorialMode, tutorialStep, xp, coins, stellars, hp, maxHp, attack, defense, JSON.stringify(inventory)],
+    [discordId, weapon, armor, chapter, dungeonFloor, level, rank, title, tutorialLanguage, tutorialMode, tutorialStep, xp, coins, stellars, hp, maxHp, attack, defense, weaponAttackBonus, armorDefenseBonus, JSON.stringify(inventory)],
   );
   return getPlayer(discordId);
 }
@@ -146,17 +155,43 @@ async function settleWager(firstId, secondId, wager) {
   }
 }
 
-async function purchaseItem(discordId, price, itemName) {
+async function purchaseItem(discordId, price, itemName, equipment = {}) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const result = await client.query(
       `UPDATE players
        SET coins = coins - $2,
-           inventory = inventory || $3::jsonb
+           inventory = inventory || $3::jsonb,
+           weapon = COALESCE($4, weapon),
+           armor = COALESCE($5, armor),
+           weapon_attack_bonus = COALESCE($6, weapon_attack_bonus),
+           armor_defense_bonus = COALESCE($7, armor_defense_bonus)
        WHERE discord_id = $1 AND coins >= $2
        RETURNING *`,
-      [discordId, price, JSON.stringify([itemName])],
+      [discordId, price, JSON.stringify([itemName]), equipment.weapon ?? null, equipment.armor ?? null, equipment.weaponAttackBonus ?? null, equipment.armorDefenseBonus ?? null],
+    );
+    await client.query("COMMIT");
+    return result.rows[0] ?? null;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function sellItem(discordId, itemName, sellPrice) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `UPDATE players
+       SET coins = coins + $3,
+           inventory = inventory - $2
+       WHERE discord_id = $1 AND inventory @> to_jsonb(ARRAY[$2]::text[])
+       RETURNING *`,
+      [discordId, itemName, sellPrice],
     );
     await client.query("COMMIT");
     return result.rows[0] ?? null;
@@ -191,7 +226,10 @@ async function updatePlayerProgress(discordId, updates) {
          max_hp = $15,
          attack = $16,
          defense = $17,
-         inventory = $18
+         weapon_attack_bonus = $18,
+         armor_defense_bonus = $19,
+         armor = $20,
+         inventory = $21
      WHERE discord_id = $1`,
     [
       discordId,
@@ -211,6 +249,9 @@ async function updatePlayerProgress(discordId, updates) {
       fields.max_hp ?? fields.maxHp ?? current.max_hp,
       fields.attack,
       fields.defense,
+      fields.weapon_attack_bonus ?? fields.weaponAttackBonus ?? current.weapon_attack_bonus ?? 0,
+      fields.armor_defense_bonus ?? fields.armorDefenseBonus ?? current.armor_defense_bonus ?? 0,
+      fields.armor ?? current.armor ?? null,
       JSON.stringify(fields.inventory ?? current.inventory ?? []),
     ],
   );
@@ -227,4 +268,5 @@ module.exports = {
   adjustCoins,
   settleWager,
   purchaseItem,
+  sellItem,
 };

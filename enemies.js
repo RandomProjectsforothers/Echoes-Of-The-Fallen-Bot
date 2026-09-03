@@ -35,6 +35,19 @@ const enemies = {
       { item: "Iron Sword", chance: 0.05 },
     ],
   },
+  ash_bandit: {
+    id: "ash_bandit",
+    name: "Ash Bandit",
+    hp: 20,
+    attack: 5,
+    defense: 1,
+    xpReward: 55,
+    coinReward: 48,
+    loot: [
+      { item: "Bandit Token", chance: 0.3 },
+      { item: "Dungeon Key", chance: 0.04 },
+    ],
+  },
 };
 
 function getEnemy(enemyId) {

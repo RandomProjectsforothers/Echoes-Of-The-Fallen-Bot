@@ -32,20 +32,21 @@ Discord RPG bot for **Echoes of the Fallen**. The current flow introduces the pl
 
 #### Phase 2: Equipment
 
-- [ ] Equip weapon and armor.
-- [ ] Apply weapon attack and armor defense bonuses.
-- [ ] Add usable consumable items through `echo use`.
+- [x] Auto-equip purchased weapons and armor with attack and defense bonuses.
+- [x] Add usable consumable items through `echo use`.
 
 #### Phase 3: Content
 
 - [ ] Complete Chapter 1 and add more Velthar dialogue.
-- [ ] Add more enemies, hunts, and quests.
-- [ ] Add the first dungeon, floors, and boss encounters.
+- [x] Add more enemies and stat-based hunts with loot chances.
+- [x] Require two or more keyed players for dungeon floors.
+- [ ] Add quests and boss encounters.
 
 #### Phase 4: Economy
 
 - [x] Gold Coins and shop.
-- [ ] Selling items and item price balancing.
+- [x] Sell unequipped items for half price.
+- [ ] Balance item prices.
 - [ ] Introduce Stellar Gold and the Empire economy.
 
 #### Phase 5: Reliability
@@ -116,8 +117,10 @@ echo hunt
 echo journey
 echo recover
 echo shop
+echo sell Healing Potion
 echo dungeon
 echo use potion
+echo use antidote
 ```
 
 You can also mention the bot before a command, for example `@Echoes of The Fallen echo profile`.
@@ -140,7 +143,7 @@ The player must have enough Gold Coins for the wager. Use `echo profile` to chec
 
 ### Shop
 
-Run `echo shop` or `/shop`, then click an item button to buy it. Purchases are saved to the player's Soul Record and subtract Gold Coins. Available items are Antidote, Healing Potion, Iron Sword, Twin Daggers, Leather Armor, Chain Armor, and Dungeon Key.
+Run `echo shop` or `/shop`, then click an item button to buy it. Purchases are saved to the player's Soul Record and subtract Gold Coins. Weapons and armor are equipped automatically and affect attack and defense. Use `echo sell <item>` to sell unequipped items for half price. Available items are Antidote, Healing Potion, Iron Sword, Twin Daggers, Leather Armor, Chain Armor, and Dungeon Key.
 
 ### Private owner commands
 
