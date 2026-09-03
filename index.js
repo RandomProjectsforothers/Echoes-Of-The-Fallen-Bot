@@ -748,7 +748,7 @@ async function sendGuidedCommandReply(message, action, payload) {
 }
 
 client.once(Events.ClientReady, (readyClient) => {
-  console.log(`Echoes of the Fallen is online as ${readyClient.user.tag}`);
+  console.log(`Echoes of the Fallen is online as ${readyClient.user.tag} | inventory-enabled-build`);
 });
 
 client.on(Events.MessageCreate, async (message) => {
