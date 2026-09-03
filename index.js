@@ -94,7 +94,9 @@ async function sendInventoryReply(target, userId, { isEphemeral = false } = {}) 
   const player = await getPlayer(userId);
   if (!player) {
     const content = "You do not have a Soul Record yet. Use `/begin` or `echo begin` to awaken in Velthar.";
-    if (target && typeof target.reply === "function") {
+    if (target && typeof target.editReply === "function" && (target.deferred || target.replied)) {
+      await target.editReply({ content });
+    } else if (target && typeof target.reply === "function") {
       await target.reply({ content, ephemeral: isEphemeral });
     } else if (target?.channel && typeof target.channel.send === "function") {
       await target.channel.send(content);
@@ -119,7 +121,9 @@ async function sendInventoryReply(target, userId, { isEphemeral = false } = {}) 
     })
     .setFooter({ text: "Use the shop to find more supplies." });
 
-  if (target && typeof target.reply === "function") {
+  if (target && typeof target.editReply === "function" && (target.deferred || target.replied)) {
+    await target.editReply({ embeds: [embed] });
+  } else if (target && typeof target.reply === "function") {
     await target.reply({ embeds: [embed], ephemeral: isEphemeral });
   } else if (target?.channel && typeof target.channel.send === "function") {
     await target.channel.send({ embeds: [embed] });
@@ -1492,6 +1496,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   if (interaction.commandName === "inventory") {
+    await interaction.deferReply({ ephemeral: true });
     await sendInventoryReply(interaction, interaction.user.id, { isEphemeral: true });
     return;
   }
