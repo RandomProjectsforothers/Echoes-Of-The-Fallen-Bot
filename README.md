@@ -166,6 +166,8 @@ echo setstellars @user amount
 echo giveitem @user item name
 ```
 
+Admin-granted weapons and armor are automatically equipped and their stat bonuses apply immediately. Consumables remain in inventory.
+
 Sage Sword Oblivion is an admin-only weapon. Players cannot select it during `begin`; the owner can assign it with `echo setweapon @user Sage Sword Oblivion`.
 
 Available ranks are:

@@ -144,6 +144,12 @@ const shopItems = {
   dungeon_key: { name: "Dungeon Key", emoji: botEmojis.key, price: 150, description: "Special item · Required to attempt a dungeon." },
 };
 
+function findEquipment(itemName) {
+  const item = Object.values(shopItems).find((shopItem) => shopItem.name.toLowerCase() === itemName.toLowerCase());
+  if (!item?.type) return null;
+  return item;
+}
+
 function createGamblingMenu() {
   return new EmbedBuilder()
     .setColor(0x6b1f2b)
@@ -1053,12 +1059,25 @@ client.on(Events.MessageCreate, async (message) => {
     if (normalized === "setdefense" && Number.isSafeInteger(numericValue)) updates.defense = numericValue;
     if (normalized === "setweapon" && value) {
       updates.weapon = rest.slice(1).join(" ");
-      if (updates.weapon === "Sage Sword Oblivion") updates.attack = OBLIVION_DAMAGE;
+      const weapon = findEquipment(updates.weapon);
+      updates.weapon_attack_bonus = updates.weapon === "Sage Sword Oblivion"
+        ? OBLIVION_DAMAGE
+        : weapon?.type === "weapon" ? weapon.attackBonus : 0;
     }
     if (normalized === "setstellars" && Number.isSafeInteger(numericValue)) updates.stellars = numericValue;
     if (normalized === "giveitem" && rest.slice(1).join(" ")) {
       const player = await ensurePlayerRecord(targetId);
-      updates.inventory = [...(Array.isArray(player.inventory) ? player.inventory : []), rest.slice(1).join(" ")];
+      const itemName = rest.slice(1).join(" ");
+      const equipment = findEquipment(itemName);
+      updates.inventory = [...(Array.isArray(player.inventory) ? player.inventory : []), itemName];
+      if (equipment?.type === "weapon") {
+        updates.weapon = equipment.name;
+        updates.weapon_attack_bonus = equipment.attackBonus;
+      }
+      if (equipment?.type === "armor") {
+        updates.armor = equipment.name;
+        updates.armor_defense_bonus = equipment.defenseBonus;
+      }
     }
 
     if (Object.keys(updates).length === 0) {
