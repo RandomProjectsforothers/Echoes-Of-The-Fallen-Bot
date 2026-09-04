@@ -1,7 +1,18 @@
 const { Pool } = require("pg");
 
+const normalizeDatabaseUrl = (url) => {
+  if (!url) return url;
+
+  if (url.includes("sslmode=")) {
+    return url.replace(/([?&])sslmode=[^&#]+/g, "$1sslmode=verify-full");
+  }
+
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}sslmode=verify-full`;
+};
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: normalizeDatabaseUrl(process.env.DATABASE_URL),
   ssl: { rejectUnauthorized: false },
 });
 

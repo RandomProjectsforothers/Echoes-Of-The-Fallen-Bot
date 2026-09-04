@@ -21,6 +21,7 @@ const {
   sellItem,
 } = require("./db");
 const { getRandomEnemy } = require("./enemies");
+const { createTutorialEnemy } = require("./tutorial");
 
 const client = new Client({
   intents: [
@@ -81,6 +82,22 @@ async function safeInteractionEdit(interaction, payload) {
   }
 }
 
+async function animateMessageSequence(message, frames, { delayMs = 350 } = {}) {
+  if (!Array.isArray(frames) || frames.length === 0) {
+    return null;
+  }
+
+  const firstFrame = frames[0];
+  const sent = await message.channel.send(firstFrame);
+
+  for (let index = 1; index < frames.length; index += 1) {
+    await sleep(delayMs);
+    await sent.edit(frames[index]);
+  }
+
+  return sent;
+}
+
 function formatInventory(inventory) {
   if (!Array.isArray(inventory) || inventory.length === 0) {
     return "No relics yet";
@@ -134,18 +151,101 @@ function formatEquipment(weapon, inventory) {
   return items.join(", ");
 }
 
-const shopItems = {
-  antidote: { name: "Antidote", emoji: botEmojis.antidote, price: 20, description: "Cures poison and other venom effects." },
-  healing_potion: { name: "Healing Potion", emoji: botEmojis.heal, price: 30, description: "Restores 25 HP when used." },
-  iron_sword: { name: "Iron Sword", type: "weapon", attackBonus: 2, price: 100, description: "Weapon · Attack +2 · Reliable shop steel." },
-  twin_daggers: { name: "Twin Daggers", type: "weapon", attackBonus: 1, price: 115, description: "Weapon · Attack +1 · Fast and precise." },
-  leather_armor: { name: "Leather Armor", type: "armor", defenseBonus: 2, price: 90, description: "Armor · Defense +2 · Buyable gear." },
-  chain_armor: { name: "Chain Armor", type: "armor", defenseBonus: 4, price: 180, description: "Armor · Defense +4 · Buyable gear." },
-  dungeon_key: { name: "Dungeon Key", emoji: botEmojis.key, price: 150, description: "Special item · Required to attempt a dungeon." },
-};
+function getFloorEconomy(floor = 1) {
+  const normalizedFloor = Math.max(1, Number(floor) || 1);
+  const goldPerHunt = 8 + normalizedFloor * 2.5;
+  const swordPrice = 90 + normalizedFloor * 38;
+  const armorPrice = Math.round(swordPrice * 0.8);
+  const keyPrices = {
+    1: 200,
+    2: 350,
+    3: 550,
+    4: 800,
+    5: 1200,
+  };
 
-function findEquipment(itemName) {
-  const item = Object.values(shopItems).find((shopItem) => shopItem.name.toLowerCase() === itemName.toLowerCase());
+  return {
+    goldPerHunt,
+    weaponPrice: swordPrice,
+    armorPrice,
+    potionPrice: 50,
+    antidotePrice: 35,
+    revivePrice: 30,
+    atkBoostPrice: Math.round(swordPrice * 0.38),
+    xpBoostPrice: Math.round(swordPrice * 0.72),
+    keyPrice: keyPrices[normalizedFloor] ?? Math.round(goldPerHunt * 30),
+  };
+}
+
+function getShopItemsForFloor(floor = 1) {
+  const economy = getFloorEconomy(floor);
+  return {
+    antidote: {
+      name: "Antidote",
+      emoji: botEmojis.antidote,
+      price: economy.antidotePrice,
+      description: "Cures poison and other venom effects.",
+    },
+    healing_potion: {
+      name: "Healing Potion",
+      emoji: botEmojis.heal,
+      price: economy.potionPrice,
+      description: "Restores 25 HP when used.",
+    },
+    revive: {
+      name: "Revive",
+      price: economy.revivePrice,
+      description: "Safety net · can save you after a bad encounter.",
+    },
+    atk_boost: {
+      name: "ATK Boost",
+      price: economy.atkBoostPrice,
+      description: "Temporary boost · raises attack for a short push.",
+    },
+    xp_boost: {
+      name: "XP Boost",
+      price: economy.xpBoostPrice,
+      description: "Temporary boost · speeds your progression for a short run.",
+    },
+    iron_sword: {
+      name: "Iron Sword",
+      type: "weapon",
+      attackBonus: 2,
+      price: Math.round(economy.weaponPrice * 0.85),
+      description: "Weapon · Attack +2 · Reliable shop steel.",
+    },
+    twin_daggers: {
+      name: "Twin Daggers",
+      type: "weapon",
+      attackBonus: 1,
+      price: Math.round(economy.weaponPrice * 0.7),
+      description: "Weapon · Attack +1 · Fast and precise.",
+    },
+    leather_armor: {
+      name: "Leather Armor",
+      type: "armor",
+      defenseBonus: 2,
+      price: Math.round(economy.armorPrice * 0.85),
+      description: "Armor · Defense +2 · Buyable gear.",
+    },
+    chain_armor: {
+      name: "Chain Armor",
+      type: "armor",
+      defenseBonus: 4,
+      price: Math.round(economy.armorPrice),
+      description: "Armor · Defense +4 · Buyable gear.",
+    },
+    dungeon_key: {
+      name: "Dungeon Key",
+      emoji: botEmojis.key,
+      price: economy.keyPrice,
+      description: "Special item · Required to attempt a dungeon.",
+    },
+  };
+}
+
+function findEquipment(itemName, floor = 1) {
+  const item = Object.values(getShopItemsForFloor(floor)).find((shopItem) => shopItem.name.toLowerCase() === itemName.toLowerCase());
   if (!item?.type) return null;
   return item;
 }
@@ -277,8 +377,9 @@ async function playSimpleGamble(target, game, wager) {
   };
 }
 
-function createShopPrompt() {
-  const buttons = Object.entries(shopItems).map(([itemId, item]) => new ButtonBuilder()
+function createShopPrompt(floor = 1) {
+  const currentShopItems = getShopItemsForFloor(floor);
+  const buttons = Object.entries(currentShopItems).map(([itemId, item]) => new ButtonBuilder()
     .setCustomId(`shop_buy_${itemId}`)
     .setLabel(`${item.name} · ${item.price} Gold`)
     .setEmoji(discordEmoji(item.emoji || "📦"))
@@ -293,7 +394,7 @@ function createShopPrompt() {
       .setColor(0x6b1f2b)
       .setTitle(`${emojiMarkup(botEmojis.shop)} Velthar Supply House`)
       .setDescription("The keeper lays out supplies for the road, the ruins, and the dungeon gate. Buyable weapons and armor are separate from anything you may craft later.")
-      .addFields(Object.values(shopItems).map((item) => ({
+      .addFields(Object.values(currentShopItems).map((item) => ({
         name: `${emojiMarkup(item.emoji || "📦")} ${item.name} · ${item.price} Gold Coins`,
         value: item.description,
       })))
@@ -363,16 +464,20 @@ async function grantPlayerReward(userId, action, { damageTaken = 0 } = {}) {
 async function resolveHunt(message) {
   const userId = message.author.id;
   const player = await ensurePlayerRecord(userId);
-  const enemy = getRandomEnemy();
+  const level = Math.max(1, player.level ?? 1);
+  const enemy = player?.tutorial_mode === "guided"
+    ? createTutorialEnemy(getRandomEnemy(level))
+    : getRandomEnemy(level);
   const stats = getEffectiveStats(player);
-  const playerDamage = Math.max(1, stats.attack - enemy.defense);
-  const incomingDamage = Math.max(1, enemy.attack - Math.floor(stats.defense / 2));
+  const playerDamage = Math.max(2, stats.attack + Math.max(0, (player.level ?? 1) - 1) - enemy.defense);
+  const incomingDamage = Math.max(1, enemy.attack - Math.max(0, Math.floor(stats.defense / 2)));
   const strikes = Math.ceil(enemy.hp / playerDamage);
   const damageTaken = strikes * incomingDamage;
   if (!isOwner(userId) && (player.hp ?? 100) <= damageTaken) {
     await updatePlayerProgress(userId, { hp: 0 });
-    await message.channel.send(`The **${enemy.name}** overwhelms you. You take **${damageTaken} damage** and fall to 0 HP. Use \`echo recover\`.`);
-    return;
+    return {
+      content: `The **${enemy.name}** overwhelms you. You take **${damageTaken} damage** and fall to 0 HP. Use \`echo recover\`.`,
+    };
   }
 
   const loot = (enemy.loot ?? []).filter((drop) => Math.random() < drop.chance).map((drop) => drop.item);
@@ -386,15 +491,16 @@ async function resolveHunt(message) {
     inventory: [...(Array.isArray(player.inventory) ? player.inventory : []), ...loot],
   });
   const rewarded = await adjustCoins(userId, enemy.coinReward);
-  await message.channel.send(
-    `**Victory!** You defeat the **${enemy.name}** in ${strikes} strike${strikes === 1 ? "" : "s"}.\n\n`
-    + `**Damage taken:** ${damageTaken}\n`
-    + `**HP:** ${updated?.hp ?? Math.max(0, (player.hp ?? 100) - damageTaken)}/${player.max_hp ?? 100}\n`
-    + `**Rewards:** +${enemy.xpReward} XP, +${enemy.coinReward} Gold Coins\n`
-    + `**Loot:** ${loot.length ? loot.join(", ") : "Nothing this time"}\n`
-    + `**Level:** ${updated?.level ?? nextLevel}\n`
-    + `**Balance:** ${rewarded?.coins ?? player.coins ?? 0} Gold Coins`,
-  );
+
+  return {
+    content: `**Victory!** You defeat the **${enemy.name}** in ${strikes} strike${strikes === 1 ? "" : "s"}.\n\n`
+      + `**Damage taken:** ${damageTaken}\n`
+      + `**HP:** ${updated?.hp ?? Math.max(0, (player.hp ?? 100) - damageTaken)}/${player.max_hp ?? 100}\n`
+      + `**Rewards:** +${enemy.xpReward} XP, +${enemy.coinReward} Gold Coins\n`
+      + `**Loot:** ${loot.length ? loot.join(", ") : "Nothing this time"}\n`
+      + `**Level:** ${updated?.level ?? nextLevel}\n`
+      + `**Balance:** ${rewarded?.coins ?? player.coins ?? 0} Gold Coins`,
+  };
 }
 
 async function sendProfileReply(target, userId, { isEphemeral = false } = {}) {
@@ -520,6 +626,25 @@ function applyWeaponImage(embed, weapon) {
   return embed;
 }
 
+function normalizeWeaponChoice(value = "") {
+  const choice = String(value || "").trim().toLowerCase();
+  const aliases = {
+    "light sword": "Light Sword",
+    "light_sword": "Light Sword",
+    "lightsword": "Light Sword",
+    "sword": "Light Sword",
+    "dagger": "Daggers",
+    "daggers": "Daggers",
+    "dual daggers": "Daggers",
+    "heavy sword": "Heavy Sword",
+    "heavy_sword": "Heavy Sword",
+    "heavysword": "Heavy Sword",
+    "great sword": "Heavy Sword",
+  };
+
+  return aliases[choice] || null;
+}
+
 function createWeaponPrompt(userId) {
   const awakening = new EmbedBuilder()
     .setColor(0x3d2942)
@@ -527,24 +652,25 @@ function createWeaponPrompt(userId) {
     .setDescription(
       "You awaken beneath the ruined bells of **Velthar**.\n\n"
       + "Your name is a hollow space in your mind, but a fractured reflection watches from the fog. "
-      + "Before you lies a weathered chest containing three weapons.",
+      + "Before you lies a weathered chest containing three weapons.\n\n"
+      + "Type `echo dagger`, `echo light sword`, or `echo heavy sword`.",
     )
     .addFields({
       name: "Choose your first weapon",
-      value: "Your choice shapes the first page of your Soul Record.",
+      value: "dagger • light sword • heavy sword",
     })
     .setFooter({ text: "Soul Record I · The Awakening" });
 
   const weapons = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
+      .setCustomId(`begin_daggers_${userId}`)
+      .setLabel("Dagger")
+      .setEmoji(weaponEmojis.daggers)
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
       .setCustomId(`begin_light_sword_${userId}`)
       .setLabel("Light Sword")
       .setEmoji(weaponEmojis.lightSword)
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(`begin_daggers_${userId}`)
-      .setLabel("Daggers")
-      .setEmoji(weaponEmojis.daggers)
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`begin_heavy_sword_${userId}`)
@@ -572,16 +698,16 @@ function createLanguagePrompt(userId) {
   };
 }
 
-function createTutorialModePrompt(language = "en") {
+function createTutorialModePrompt(language = "en", userId = "") {
   const spanish = language === "es";
   const modeButtons = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId("tutorial_guided")
+      .setCustomId(`tutorial_guided_${userId}`)
       .setLabel(spanish ? "Tutorial guiado" : "Play through tutorial")
       .setEmoji("▶️")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
-      .setCustomId("tutorial_long")
+      .setCustomId(`tutorial_long_${userId}`)
       .setLabel(spanish ? "Leer guía completa" : "Read entire guide")
       .setEmoji("📖")
       .setStyle(ButtonStyle.Secondary),
@@ -597,12 +723,12 @@ function createTutorialModePrompt(language = "en") {
   };
 }
 
-function createTutorialStartPrompt(language, mode) {
+function createTutorialStartPrompt(language, mode, userId = "") {
   const spanish = language === "es";
   const guided = mode === "guided";
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(guided ? "tutorial_start_guided" : "tutorial_open_long")
+      .setCustomId(`${guided ? "tutorial_start_guided" : "tutorial_open_long"}_${userId}`)
       .setLabel(guided
         ? (spanish ? "Comenzar tutorial guiado" : "Begin guided tutorial")
         : (spanish ? "Abrir guía completa" : "Open full guide"))
@@ -664,12 +790,16 @@ function createGuidedPrompt(language, step) {
   const prompts = spanish
     ? [
       "Primer paso: usa `echo hunt` para enfrentarte a una criatura de Velthar.",
+      "Tras la pelea, visita `echo shop` y compra una poción si te lastimaron.",
+      "Usa `echo use potion` para curarte antes de seguir avanzando.",
       "Buen comienzo. Ahora usa `echo journey` para investigar un camino más peligroso.",
       "La exploración deja heridas. Usa `echo recover` para restaurar tu HP.",
       "Ya estás preparado. Usa `echo dungeon` para acercarte a la entrada de la mazmorra.",
     ]
     : [
       "First step: use `echo hunt` to face a creature in Velthar.",
+      "After the fight, visit `echo shop` and buy a potion if the battle left you hurt.",
+      "Use `echo use potion` to heal yourself before continuing.",
       "Good start. Now use `echo journey` to investigate a more dangerous path.",
       "The ruins leave wounds behind. Use `echo recover` to restore your HP.",
       "You are ready. Use `echo dungeon` to approach the dungeon entrance.",
@@ -689,7 +819,7 @@ async function sendGuidedCommandReply(message, action, payload) {
     return;
   }
 
-  const expectedActions = ["hunt", "journey", "recover", "dungeon"];
+  const expectedActions = ["hunt", "shop", "use", "journey", "recover", "dungeon"];
   const step = player.tutorial_step ?? 0;
   if (expectedActions[step] !== action) {
     await message.channel.send(payload);
@@ -697,7 +827,17 @@ async function sendGuidedCommandReply(message, action, payload) {
   }
 
   const nextStep = step + 1;
-  await updatePlayerProgress(message.author.id, { tutorial_step: nextStep });
+
+  if (action === "shop") {
+    const inventory = Array.isArray(player.inventory) ? player.inventory : [];
+    const starterInventory = inventory.includes("Healing Potion") ? inventory : [...inventory, "Healing Potion"];
+    await updatePlayerProgress(message.author.id, {
+      tutorial_step: nextStep,
+      inventory: starterInventory,
+    });
+  } else {
+    await updatePlayerProgress(message.author.id, { tutorial_step: nextStep });
+  }
 
   const tutorialPrompt = createGuidedPrompt(player.tutorial_language ?? "en", nextStep);
   await message.channel.send({
@@ -735,6 +875,14 @@ client.on(Events.MessageCreate, async (message) => {
   const args = commandText.slice(5).trim();
   const [command, ...rest] = args.split(/\s+/);
   let normalized = (command || "").toLowerCase();
+  const shortWeaponChoice =
+    normalized === "light" && rest[0]?.toLowerCase() === "sword"
+      ? "light sword"
+      : normalized === "heavy" && rest[0]?.toLowerCase() === "sword"
+        ? "heavy sword"
+        : normalized === "dagger" || normalized === "daggers"
+          ? normalized
+          : null;
   const directGamblingCommands = ["cf", "slots", "rigged", "rgc", "poker17", "lottery"];
   if (normalized === "rigged" && rest[0]?.toLowerCase() === "card" && rest[1]?.toLowerCase() === "game") {
     rest.splice(0, 2);
@@ -806,9 +954,112 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
+    if (rest.length > 0) {
+      const chosenWeapon = normalizeWeaponChoice(rest.join(" "));
+      if (chosenWeapon) {
+        const language = pendingLanguages.get(message.author.id) || "en";
+        await createPlayer(message.author.id, chosenWeapon, {
+          chapter: 1,
+          hp: 100,
+          maxHp: 100,
+          attack: 1,
+          defense: 1,
+          rank: "Bronze",
+          title: "Newbie",
+          tutorialLanguage: language,
+          inventory: ["Ashen charm", "Torn map"],
+        });
+
+        const choice = {
+          name: chosenWeapon,
+          emoji: chosenWeapon === "Light Sword" ? weaponEmojis.lightSword : chosenWeapon === "Daggers" ? weaponEmojis.daggers : weaponEmojis.heavySword,
+          text: chosenWeapon === "Light Sword"
+            ? "A precise blade settles easily into your hand. The reflection in the fog nods once."
+            : chosenWeapon === "Daggers"
+              ? "Twin blades disappear into your palms. Somewhere in the mist, something begins to laugh."
+              : "The great blade is almost too heavy to lift. Yet it feels as though it remembers you.",
+        };
+
+        await message.channel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x6b1f2b)
+              .setTitle(`${emojiMarkup(choice.emoji)} Soul Record Created · ${choice.name}`)
+              .setDescription(
+                `${choice.text}\n\n`
+                + "**Chapter I: The Awakening** has begun. Your Echo moves beyond the ruined gates of Velthar and into the first chapter of its journey.",
+              )
+              .setFooter({ text: "Your Soul Record has been saved." }),
+          ],
+        });
+
+        const tutorialPrompt = createTutorialModePrompt(language);
+        await message.channel.send({ embeds: [tutorialPrompt.embed] });
+        pendingBegins.delete(message.author.id);
+        pendingLanguages.delete(message.author.id);
+        return;
+      }
+    }
+
     const languagePrompt = createLanguagePrompt(message.author.id);
     pendingBegins.set(message.author.id, true);
     await message.channel.send({ embeds: [languagePrompt.embed], components: [languagePrompt.components] });
+    return;
+  }
+
+  if (["choose", "pick", "select", "weapon"].includes(normalized) || shortWeaponChoice) {
+    const chosenWeapon = normalizeWeaponChoice(shortWeaponChoice || rest.join(" "));
+    if (!chosenWeapon) {
+      await message.channel.send("Choose a valid weapon: `echo dagger`, `echo light sword`, or `echo heavy sword`.");
+      return;
+    }
+
+    const existing = await getPlayer(message.author.id);
+    if (existing) {
+      await message.channel.send(`Your Soul Record already has the **${existing.weapon}** equipped. Use ` + "`echo profile` to review it.");
+      return;
+    }
+
+    const language = pendingLanguages.get(message.author.id) || "en";
+    await createPlayer(message.author.id, chosenWeapon, {
+      chapter: 1,
+      hp: 100,
+      maxHp: 100,
+      attack: 1,
+      defense: 1,
+      rank: "Bronze",
+      title: "Newbie",
+      tutorialLanguage: language,
+      inventory: ["Ashen charm", "Torn map"],
+    });
+
+    const choice = {
+      name: chosenWeapon,
+      emoji: chosenWeapon === "Light Sword" ? weaponEmojis.lightSword : chosenWeapon === "Daggers" ? weaponEmojis.daggers : weaponEmojis.heavySword,
+      text: chosenWeapon === "Light Sword"
+        ? "A precise blade settles easily into your hand. The reflection in the fog nods once."
+        : chosenWeapon === "Daggers"
+          ? "Twin blades disappear into your palms. Somewhere in the mist, something begins to laugh."
+          : "The great blade is almost too heavy to lift. Yet it feels as though it remembers you.",
+    };
+
+    await message.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x6b1f2b)
+          .setTitle(`${emojiMarkup(choice.emoji)} Soul Record Created · ${choice.name}`)
+          .setDescription(
+            `${choice.text}\n\n`
+            + "**Chapter I: The Awakening** has begun. Your Echo moves beyond the ruined gates of Velthar and into the first chapter of its journey.",
+          )
+          .setFooter({ text: "Your Soul Record has been saved." }),
+      ],
+    });
+
+    const tutorialPrompt = createTutorialModePrompt(language);
+    await message.channel.send({ embeds: [tutorialPrompt.embed] });
+    pendingBegins.delete(message.author.id);
+    pendingLanguages.delete(message.author.id);
     return;
   }
 
@@ -831,13 +1082,63 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (normalized === "shop") {
-    const shop = createShopPrompt();
-    await message.channel.send({ embeds: [shop.embed], components: shop.components });
+    const player = await ensurePlayerRecord(message.author.id);
+    const floor = Math.max(1, player.dungeon_floor ?? player.chapter ?? 1);
+    const shop = createShopPrompt(floor);
+    await sendGuidedCommandReply(message, "shop", { embeds: [shop.embed], components: shop.components });
+    return;
+  }
+
+  if (normalized === "buy") {
+    const itemName = rest.join(" ");
+    if (!itemName) {
+      await message.channel.send("Usage: `echo buy healing potion` or `echo buy iron sword`.");
+      return;
+    }
+
+    const itemValue = itemName.trim();
+    const player = await ensurePlayerRecord(message.author.id);
+    const floor = Math.max(1, player.dungeon_floor ?? player.chapter ?? 1);
+    const itemKey = Object.keys(getShopItemsForFloor(floor)).find((key) => {
+      const item = getShopItemsForFloor(floor)[key];
+      return item.name.toLowerCase() === itemValue.toLowerCase()
+        || key.toLowerCase() === itemValue.toLowerCase()
+        || item.name.toLowerCase().includes(itemValue.toLowerCase())
+        || key.toLowerCase().includes(itemValue.toLowerCase());
+    });
+
+    if (!itemKey) {
+      await message.channel.send("That item is not for sale here. Try `echo shop` and check the supply list.");
+      return;
+    }
+
+    const item = getShopItemsForFloor(floor)[itemKey];
+    const quantity = 1;
+    const totalCost = item.price * quantity;
+    if (!isOwner(message.author.id) && (player.coins ?? 0) < totalCost) {
+      await message.channel.send(`You need **${totalCost} Gold Coins** for **${item.name}**, but only have **${player.coins ?? 0}**.`);
+      return;
+    }
+
+    const equipment = item.type === "weapon"
+      ? { weapon: item.name, weaponAttackBonus: item.attackBonus }
+      : item.type === "armor"
+        ? { armor: item.name, armorDefenseBonus: item.defenseBonus }
+        : {};
+
+    const updated = await purchaseItem(message.author.id, totalCost, item.name, equipment);
+    if (!updated) {
+      await message.channel.send("That purchase could not be completed because your balance changed. Please try again.");
+      return;
+    }
+
+    await message.channel.send(`You bought **${item.name}** for **${totalCost} Gold Coins**. Remaining balance: **${updated.coins} Gold Coins**.`);
     return;
   }
 
   if (normalized === "hunt") {
-    await resolveHunt(message);
+    const huntPayload = await resolveHunt(message);
+    await sendGuidedCommandReply(message, "hunt", huntPayload);
     return;
   }
 
@@ -853,7 +1154,15 @@ client.on(Events.MessageCreate, async (message) => {
         await message.channel.send("Choose a whole-number wager. Example: `echo slots 25`.");
         return;
       }
-      await message.channel.send(await playSimpleGamble(message, "slots", wager));
+
+      const result = await playSimpleGamble(message, "slots", wager);
+      const frames = [
+        { embeds: [new EmbedBuilder().setColor(0x3d2942).setTitle("🎰 Slots").setDescription("The reels spin in the dark..." )] },
+        { embeds: [new EmbedBuilder().setColor(0x6b1f2b).setTitle("🎰 Slots").setDescription("🍒 | 7️⃣ | 💎") ] },
+        { embeds: [new EmbedBuilder().setColor(0x6b1f2b).setTitle("🎰 Slots").setDescription("⭐ | 🍋 | 7️⃣") ] },
+        result,
+      ];
+      await animateMessageSequence(message, frames, { delayMs: 350 });
       return;
     }
 
@@ -940,7 +1249,8 @@ client.on(Events.MessageCreate, async (message) => {
     const itemIndex = inventory.indexOf(itemName);
 
     if (!isOwner(message.author.id) && itemIndex === -1) {
-      await message.channel.send(`You do not have an ${itemName}. Use \`echo shop\` to visit the supply house.`);
+      const failed = { content: `You do not have an ${itemName}. Use \`echo shop\` to visit the supply house.` };
+      await sendGuidedCommandReply(message, "use", failed);
       return;
     }
 
@@ -948,14 +1258,16 @@ client.on(Events.MessageCreate, async (message) => {
       const nextInventory = [...inventory];
       nextInventory.splice(itemIndex, 1);
       await updatePlayerProgress(message.author.id, { inventory: nextInventory });
-      await message.channel.send(`${emojiMarkup(botEmojis.antidote)} ${message.author} uses an Antidote. Poison effects are cleared.`);
+      const payload = { content: `${emojiMarkup(botEmojis.antidote)} ${message.author} uses an Antidote. Poison effects are cleared.` };
+      await sendGuidedCommandReply(message, "use", payload);
       return;
     }
 
     const currentHp = player.hp ?? 100;
     const maxHp = player.max_hp ?? 100;
     if (!isOwner(message.author.id) && currentHp >= maxHp) {
-      await message.channel.send("Your HP is already full. Save the Healing Potion for a dangerous encounter.");
+      const payload = { content: "Your HP is already full. Save the Healing Potion for a dangerous encounter." };
+      await sendGuidedCommandReply(message, "use", payload);
       return;
     }
 
@@ -963,18 +1275,27 @@ client.on(Events.MessageCreate, async (message) => {
     nextInventory.splice(itemIndex, 1);
     const healed = Math.min(maxHp, currentHp + 25);
     await updatePlayerProgress(message.author.id, { hp: healed, inventory: nextInventory });
-    await message.channel.send(`🧪 ${message.author} drinks a Healing Potion and restores **${healed - currentHp} HP** (**${healed}/${maxHp} HP**).`);
+
+    const potionFrames = [
+      { content: `🧪 ${message.author} cracks open a Healing Potion...` },
+      { content: `✨ A warm pulse ripples through the air...` },
+      { content: `🩹 ${message.author} restores **${healed - currentHp} HP** (**${healed}/${maxHp} HP**).` },
+    ];
+    await animateMessageSequence(message, potionFrames, { delayMs: 400 });
+    await sendGuidedCommandReply(message, "use", potionFrames[potionFrames.length - 1]);
     return;
   }
 
   if (normalized === "sell") {
     const itemName = rest.join(" ");
-    const item = Object.values(shopItems).find((shopItem) => shopItem.name.toLowerCase() === itemName.toLowerCase());
+    const player = await ensurePlayerRecord(message.author.id);
+    const floor = Math.max(1, player.dungeon_floor ?? player.chapter ?? 1);
+    const item = Object.values(getShopItemsForFloor(floor)).find((shopItem) => shopItem.name.toLowerCase() === itemName.toLowerCase());
     if (!item) {
       await message.channel.send("Choose an item you own to sell. Example: `echo sell Iron Sword`.");
       return;
     }
-    const currentPlayer = await ensurePlayerRecord(message.author.id);
+    const currentPlayer = player;
     if (currentPlayer.weapon === item.name || currentPlayer.armor === item.name) {
       await message.channel.send("You cannot sell equipment that is currently equipped.");
       return;
@@ -1257,46 +1578,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId.startsWith("shop_buy_")) {
-      await interaction.deferReply();
-
-      const itemId = interaction.customId.slice("shop_buy_".length);
-      const item = shopItems[itemId];
-      if (!item) {
-        await interaction.editReply("That shop item is no longer available.");
-        return;
-      }
-
-      const player = await ensurePlayerRecord(interaction.user.id);
-      const gold = player.coins ?? 0;
-      if (!isOwner(interaction.user.id) && gold < item.price) {
-        await interaction.editReply(`You need **${item.price} Gold Coins**, but only have **${gold}**.`);
-        return;
-      }
-
-        const equipment = item.type === "weapon"
-          ? { weapon: item.name, weaponAttackBonus: item.attackBonus }
-          : item.type === "armor"
-            ? { armor: item.name, armorDefenseBonus: item.defenseBonus }
-            : {};
-        const updated = await purchaseItem(interaction.user.id, item.price, item.name, equipment);
-        if (!updated) {
-          await interaction.editReply("That purchase could not be completed because your balance changed. Please try again.");
-          return;
-        }
-
-      await interaction.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x3d2942)
-            .setTitle("Purchase recorded")
-            .setDescription(
-              `${interaction.user} purchased **${item.name}** for **${item.price} Gold Coins**.\n\n`
-              + `**Gold Coins remaining:** ${updated?.coins ?? gold - item.price}\n`
-              + `**Stored in:** Soul Record inventory`,
-            )
-            .setFooter({ text: "Stellars remain reserved for the Empire." }),
-        ],
-      });
+      await interaction.deferReply({ ephemeral: true });
+      await interaction.editReply("Use the chat command instead: `echo buy healing potion` or `echo buy iron sword`.");
       return;
     }
 

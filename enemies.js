@@ -50,14 +50,33 @@ const enemies = {
   },
 };
 
-function getEnemy(enemyId) {
+function scaleEnemyStats(enemy, playerLevel = 1) {
+  if (!enemy) return null;
+
+  const level = Math.max(1, Number(playerLevel) || 1);
+  const levelBonus = Math.max(0, level - 1) * 0.35;
+  const attack = Math.max(2, Math.round((level * 2) + 2 + (enemy.attack || 0) * 0.75 * levelBonus));
+  const defense = Math.max(0, Math.round((enemy.defense || 0) + level * 0.5));
+  const hp = Math.max(8, Math.round((enemy.hp || 12) * (1 + levelBonus * 0.75)));
+
+  return {
+    ...enemy,
+    attack,
+    defense,
+    hp,
+    xpReward: Math.max(10, Math.round((enemy.xpReward || 10) * (1 + levelBonus * 0.5))),
+    coinReward: Math.max(8, Math.round((enemy.coinReward || 10) * (1 + levelBonus * 0.5))),
+  };
+}
+
+function getEnemy(enemyId, playerLevel = 1) {
   const enemy = enemies[enemyId];
-  return enemy ? { ...enemy } : null;
+  return enemy ? scaleEnemyStats(enemy, playerLevel) : null;
 }
 
-function getRandomEnemy() {
+function getRandomEnemy(playerLevel = 1) {
   const pool = Object.values(enemies);
-  return getEnemy(pool[Math.floor(Math.random() * pool.length)].id);
+  return getEnemy(pool[Math.floor(Math.random() * pool.length)].id, playerLevel);
 }
 
-module.exports = { enemies, getEnemy, getRandomEnemy };
+module.exports = { enemies, getEnemy, getRandomEnemy, scaleEnemyStats };
